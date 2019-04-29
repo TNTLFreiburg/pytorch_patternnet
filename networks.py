@@ -69,14 +69,11 @@ class PatternNet(torch.nn.Module):
                     next_layer_ind+=1
                 next_layer = self.lst_layers[next_layer_ind].__class__.__name__
                 # now check if there's a change between conv and linear layers
-                # print('Current layer:', cur_layer, 'Next layer:', next_layer)
-                # print('Indices:',cur_layer_ind, next_layer_ind)
                 if cur_layer == "Conv2d" and next_layer == "Linear":
                     self.reshape_ind = next_layer_ind
                 cur_layer_ind = next_layer_ind
                 cur_layer = next_layer
                 next_layer_ind = cur_layer_ind +1
-        print('Linear layer for reshape:', self.reshape_ind)
 
         self.weights_lst = []
         for layer in layers_lst:
@@ -159,9 +156,7 @@ class PatternNet(torch.nn.Module):
                     s = self._reshape_size_in
                     shape_before_reshape = y.shape
                     y.data = y.data.view(-1, s[1], s[2], s[3])
-                    print('Reshaping during backward pass:')
-                    print('Shape before reshape:', shape_before_reshape, 
-                          'Shape after reshape:', y.shape)
+ 
 
         return y
 
@@ -254,9 +249,7 @@ class PatternNet(torch.nn.Module):
             if ind == self.reshape_ind-1:  # layer before the first linear layer
                     self._reshape_size_in = output.shape
                     output = output.view(-1,self.lst_layers[ind+1].in_features)
-                    print('Reshaping during forward pass:')
-                    print('Shape before reshape:', self._reshape_size_in, 
-                          'Shape after reshape:', output.shape)
+
 
         return (
             output,
