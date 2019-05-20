@@ -2,7 +2,7 @@
 In this repository you can find a pytorch implementation of PatternNet as described in [Learning how to explain neural networks: PatternNet and PatternAttribution](https://arxiv.org/abs/1705.05598). The idea of PatternNet is to visualize what a neural network sees as the signal in an input. For this a backward projection from the output space to the input space of the network is created from example forward projections. 
 
 ## Installation 
-In order to run the code provided in this repository it is easiest to set up a anaconda environment from the *patternnet_env.yml* file. If you have anaconda installed, simply download this repository, navigate to the folder where you saved the repository in your terminal and execute the following :
+In order to run the code provided in this repository it is easiest to set up a conda environment from the *patternnet_env.yml* file. If you have conda installed, simply download this repository, navigate to the folder where you saved the repository in your terminal and execute the following :
 
 ``` 
 conda env create -f environment.yml

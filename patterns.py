@@ -372,9 +372,12 @@ def _rowwise_mul(matrix, other):
 
 
 def _rowwise_div(matrix, vector):
-    # need to implement a check for zeros in vector
+
+    if vector.dim() == 0:
+        return matrix * (1 / vector)
 
     result = torch.zeros(matrix.size(), dtype=DTYPE)
+    
     for i in range(matrix.size()[0]):
         # if there's a 0 in vector we just set the result
         # to 0 or leave the values that are in matrix?
