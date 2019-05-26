@@ -115,7 +115,6 @@ class PatternNet(torch.nn.Module):
 
         ind_cnt = 0
         switch_cnt = 0
-        pool_cnt = 0
 
         # go through all layers and apply their backward pass functionality
         for ind, layer in enumerate(self.backward_layers):
@@ -126,7 +125,6 @@ class PatternNet(torch.nn.Module):
             elif layer.__class__.__name__ == "MaxUnpool2d":
                 y = layer(y, switches[switch_cnt])
                 switch_cnt += 1
-                pool_cnt += 1
             else:
                 # if other layer than linear or conv, could theoretically
                 # be applied here without noticing
@@ -154,7 +152,8 @@ class PatternNet(torch.nn.Module):
                     # y.data = res
 
                     s = self._reshape_size_in
-                    shape_before_reshape = y.shape
+                    # next line not necessary?
+                    # shape_before_reshape = y.shape
                     y.data = y.data.view(-1, s[1], s[2], s[3])
  
 
