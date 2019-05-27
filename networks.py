@@ -448,7 +448,7 @@ class PatternNetLayers(torch.nn.Module):
             if layer.__class__.__name__ == "MaxPool2d":
                 self.backward_layers.append(layers.PatternMaxPool2d(layer))
             if layer.__class__.__name__ == "ReLU":
-                self.backward_layers.append(layers.PatternReLU)
+                self.backward_layers.append(layers.PatternReLU())
 
     def compute_signal(self, img, only_biggest_value=True):
         """ Additional method to compute the signal for a given image. """
@@ -462,12 +462,8 @@ class PatternNetLayers(torch.nn.Module):
             y = output
         # use only highest valued output
         else:
-            # atm only works for single images, make it work with several 
-            # images as well
             y = torch.zeros(output.size(), requires_grad=False)
             max_v, max_i = torch.max(output.data, dim=1)
-            # max_i = int(max_i.numpy())
-            # max_v = float(max_v.numpy())
             y[range(y.shape[0]), max_i] = max_v
 
         ind_cnt = 0
@@ -475,23 +471,17 @@ class PatternNetLayers(torch.nn.Module):
 
         # go through all layers and apply their backward pass functionality
         for ind, layer in enumerate(self.backward_layers):
-            if layer.__class__.__name__ == "BackwardReLU":
+            if layer.__class__.__name__ == "PatternReLU":
                 mask = indices[ind_cnt]
-                y = layer(y, mask)
+                y = layer.backward(y, mask)
                 ind_cnt += 1
-            elif layer.__class__.__name__ == "MaxUnpool2d":
-                y = layer(y, switches[switch_cnt])
+            elif layer.__class__.__name__ == "PatternMaxPool2d":
+                y = layer.backward(y, switches[switch_cnt])
                 switch_cnt += 1
             else:
                 # if other layer than linear or conv, could theoretically
                 # be applied here without noticing
-                y = layer(y)
-                # scale output to be between -1 and 1
-                absmax = torch.abs(y.data).max()
-                if absmax > 0.000001:
-                    y.data = y.data / absmax
-                y.data[y.data > 1] = 1
-                y.data[y.data < -1] = -1
+                y = layer.backward(y)
 
                 # check if reshape is necessary
                 if len(self.lst_layers) - ind == self.reshape_ind + 1:
@@ -528,25 +518,26 @@ class PatternNetLayers(torch.nn.Module):
         #     return new_tensor
 
         for ind, layer in enumerate(self.backward_layers[::-1]):
+            # print(layer.forward_layer)
             if layer.__class__.__name__ == "PatternConv2d":
                 # save input to layer
                 layers.append({})
-                layers[ind]["inputs"] = output.data
+                layers[cnt]["inputs"] = output.data
                 # apply forward layer
                 output, output_wo_bias = layer(output)
                 # save output of layer
-                layers[ind]["outputs"] = output.data
+                layers[cnt]["outputs"] = output.data
                 # save output without bias
                 layers_wo_bias.append(output_wo_bias)
                 cnt += 1
             elif layer.__class__.__name__ == "PatternLinear":
                 # save input to layer
                 layers.append({})
-                layers[ind]["inputs"] = output.data
+                layers[cnt]["inputs"] = output.data
                 # apply layer
                 output, output_wo_bias = layer(output)
                 # save output of layer
-                layers[ind]["outputs"] = output.data
+                layers[cnt]["outputs"] = output.data
                 # save output without bias
                 layers_wo_bias.append(output_wo_bias)
                 cnt += 1
@@ -601,7 +592,7 @@ class PatternNetLayers(torch.nn.Module):
                     layer.compute_patterns()
 
 
-    def set_patterns(self, pattern_type="A_plus"):
+    def set_patterns(self, pattern_type="relu"):
         """ pattern_type can either be A_plus or A_linear
         """
         for layer in self.backward_layers[::-1]:

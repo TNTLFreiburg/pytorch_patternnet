@@ -41,22 +41,23 @@ class PatternConv2d(nn.Module):
         
         output = self.forward_layer(input)
         # TODO: what if the layer does not have a bias?
-        bias = expand_bias(self.forward_layer.bias.data)
+        bias = expand_bias(self.forward_layer.bias.data, output.data.shape)
         output_wo_bias = output - bias
 
         return output, output_wo_bias
 
 
-    def backward(self, input):
+    def backward(self, input, normalize_output=True):
         ''' compute a backward step (for signal computation).
         '''
         output = self.backward_layer(input)
-        # rescale output to be between -1 and 1
-        absmax = torch.abs(output.data).max()
-        if absmax > 0.000001:
-            output.data /= absmax
-        output.data[output.data > 1] = 1
-        output.data[output.data < -1] = -1
+        if normalize_output:
+            # rescale output to be between -1 and 1
+            absmax = torch.abs(output.data).max()
+            if absmax > 0.000001:
+                output.data /= absmax
+            output.data[output.data > 1] = 1
+            output.data[output.data < -1] = -1
 
         return output
 
@@ -103,7 +104,7 @@ class PatternConv2d(nn.Module):
     def compute_patterns(self):
         ''' Compute patterns from the computed statistics. 
         '''
-        kernel = next(self.forward_layer.parameters())
+        kernel = self.forward_layer.weight.data
         self.patterns = patterns.compute_patterns_conv(self.statistics, 
                                                        kernel)
 
@@ -112,9 +113,9 @@ class PatternConv2d(nn.Module):
             pattern_type can be 'relu' or 'linear'
         '''
         if pattern_type == 'relu':
-            next(self.backward_layer.parameters()) = self.patterns['A_plus']
+            self.backward_layer.parameters().__next__().data = self.patterns['A_plus']
         elif pattern_type == 'linear':
-            next(self.backward_layer.parameters()) = self.patterns['A_linear']
+            self.backward_layer.parameters().__next__().data = self.patterns['A_linear']
 
 
 class PatternLinear(nn.Module):
@@ -146,22 +147,23 @@ class PatternLinear(nn.Module):
 
         output = self.forward_layer(input)
         # TODO: what if the layer does not have a bias?
-        bias = expand_bias(self.forward_layer.bias.data)
+        bias = expand_bias(self.forward_layer.bias.data, output.data.shape)
         output_wo_bias = output - bias
 
         return output, output_wo_bias
 
 
-    def backward(self, input):
+    def backward(self, input, normalize_output=True):
         ''' compute a backward step (for signal computation).
         '''
         output = self.backward_layer(input)
-        # rescale output to be between -1 and 1
-        absmax = torch.abs(output.data).max()
-        if absmax > 0.000001:
-            output.data /= absmax
-        output.data[output.data > 1] = 1
-        output.data[output.data < -1] = -1
+        if normalize_output:
+            # rescale output to be between -1 and 1
+            absmax = torch.abs(output.data).max()
+            if absmax > 0.000001:
+                output.data /= absmax
+            output.data[output.data > 1] = 1
+            output.data[output.data < -1] = -1
 
         return output
 
@@ -201,7 +203,7 @@ class PatternLinear(nn.Module):
     def compute_patterns(self):
         ''' Compute patterns from the computed statistics. 
         '''
-        w = next(self.forward_layer.parameters())
+        w = self.forward_layer.weight.data
         self.patterns = patterns.compute_patterns_linear(self.statistics, w)
 
 
@@ -210,9 +212,10 @@ class PatternLinear(nn.Module):
             pattern_type can be 'relu' or 'linear'
         '''
         if pattern_type == 'relu':
-            next(self.backward_layer.parameters()) = self.patterns['A_plus']
+            # self.backward_layer.weight.data = self.patterns['A_plus'].permute(1,0)
+            self.backward_layer.parameters().__next__().data = self.patterns['A_plus'].permute(1,0)
         elif pattern_type == 'linear':
-            next(self.backward_layer.parameters()) = self.patterns['A_linear']
+            self.backward_layer.parameters().__next__().data = self.patterns['A_linear'].permute(1,0)
 
 
 class PatternReLU(nn.Module):
@@ -230,7 +233,7 @@ class PatternReLU(nn.Module):
 
     def backward(self, input, indices):
         # copy the input
-        input = torch.new_tensor(input)
+        input = input.clone().detach()
         input[indices] = 0
 
         return input
