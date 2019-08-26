@@ -8,20 +8,39 @@ class PatternConv2d(nn.Module):
     def __init__(self, conv_layer):
         super(PatternConv2d, self).__init__()
 
+        if conv_layer.dilation != (1,1):
+
+            def dilation_mask(kernel_size, dilation):
+    
+                mask = torch.zeros(kernel_size[0], kernel_size[1], 
+                                kernel_size[2]+(dilation[0]-1)*(kernel_size[2]-1),
+                                kernel_size[3]+(dilation[1]-1)*(kernel_size[3]-1))
+                
+                locs_x = np.arange(0, mask.shape[2], dilation[0])
+                locs_y = np.arange(0, mask.shape[3], dilation[1])
+                inds_x, inds_y = np.meshgrid(locs_x, locs_y)
+                
+                mask[:,:,inds_x, inds_y] = 1
+                
+                return mask
+
+            self.dil_mask = lambda ks: dilation_mask(ks, conv_layer.dilation)
+
+        
         self.forward_layer = conv_layer  # kernels size of forward layer: 
                                          # self.forward_layer.kernel_size
-        padding_f = conv_layer.padding[0]
-        ks = conv_layer.kernel_size[0]
-        padding_b = -padding_f + ks - 1
+        padding_f = np.array(conv_layer.padding)
+        ks = np.array(self.forward_layer.kernel_size) 
+        padding_b = tuple(-padding_f + ks - 1)
         self.backward_layer =  nn.Conv2d(
             conv_layer.out_channels,
             conv_layer.in_channels,
-            conv_layer.kernel_size,
+            ks,
             stride=conv_layer.stride,
             padding=padding_b,
             bias=False,
         )
-
+    
         self.statistics = None
         self.patterns = None
 
@@ -40,7 +59,9 @@ class PatternConv2d(nn.Module):
 
         
         output = self.forward_layer(input)
-        # TODO: what if the layer does not have a bias?
+        # what if the layer does not have a bias?
+        if self.forward_layer.bias is None:
+            return output
         bias = expand_bias(self.forward_layer.bias.data, output.data.shape)
         output_wo_bias = output - bias
 
@@ -51,6 +72,13 @@ class PatternConv2d(nn.Module):
         ''' compute a backward step (for signal computation).
         '''
         output = self.backward_layer(input)
+        # if the dilation is not none the output has to be 
+        # dilated to the original input size
+        if self.forward_layer.dilation != (1,1):
+            output_mask = self.dil_mask(output.shape)
+            output_dilated = torch.zeros(output_mask.shape)
+            output_dilated[output_mask == 1] = torch.flatten(output)
+            output = output_dilated
         if normalize_output:
             # rescale output to be between -1 and 1
             absmax = torch.abs(output.data).max()
@@ -58,6 +86,9 @@ class PatternConv2d(nn.Module):
                 output.data /= absmax
             output.data[output.data > 1] = 1
             output.data[output.data < -1] = -1
+
+        
+
 
         return output
 
@@ -71,9 +102,19 @@ class PatternConv2d(nn.Module):
             without bias, i.e. the layer's output, is in output and there is 
             no tensor in output_wo_bias.
         '''
+        kernel_size = self.forward_layer.kernel_size
+        if self.forward_layer.dilation != (1,1):
+            dilation = self.forward_layer.dilation
+            kernel_size = tuple((kernel_size[0]+(dilation[0]-1)*(kernel_size[0]-1),
+                                kernel_size[1]+(dilation[1]-1)*(kernel_size[1]-1)))
+
         if output_wo_bias is None:
             inp_dense, out_dense = patterns._conv_maps_to_dense(input, output,
-                                        self.forward_layer.kernel_size)
+                                                                kernel_size)
+            if self.forward_layer.dilation != (1,1):
+                inp_mask = torch.flatten(self.dil_mask(self.forward_layer.weight.shape)[0])
+                inp_dense = inp_dense[:, inp_mask==1]
+
             if self.statistics is None:
                 self.statistics = patterns.compute_statistics(inp_dense, 
                                                               out_dense, 
@@ -87,9 +128,13 @@ class PatternConv2d(nn.Module):
         else:
             inp_dense, out_wo_bias_dense = patterns._conv_maps_to_dense(input, 
                                             output_wo_bias,
-                                            self.forward_layer.kernel_size)
+                                            kernel_size)
             _, out_dense = patterns._conv_maps_to_dense(input, output,
-                                        self.forward_layer.kernel_size)
+                                        kernel_size)
+            if self.forward_layer.dilation != (1,1):
+                inp_mask = torch.flatten(self.dil_mask(self.forward_layer.weight.shape)[0])
+                inp_dense = inp_dense[:, inp_mask==1]
+ 
             if self.statistics is None:
                 self.statistics = patterns.compute_statistics(inp_dense, 
                                                             out_wo_bias_dense, 
@@ -107,6 +152,7 @@ class PatternConv2d(nn.Module):
         kernel = self.forward_layer.weight.data
         self.patterns = patterns.compute_patterns_conv(self.statistics, 
                                                        kernel)
+
 
     def set_patterns(self, pattern_type='relu'):
         ''' Sets the computed patterns as the kernel of the backward layer.
@@ -147,6 +193,8 @@ class PatternLinear(nn.Module):
 
         output = self.forward_layer(input)
         # TODO: what if the layer does not have a bias?
+        if self.forward_layer.bias is None:
+            return output
         bias = expand_bias(self.forward_layer.bias.data, output.data.shape)
         output_wo_bias = output - bias
 
