@@ -25,18 +25,23 @@ class PatternConv2d(nn.Module):
                 return mask
 
             self.dil_mask = lambda ks: dilation_mask(ks, conv_layer.dilation)
-
+            
+            
         
         self.forward_layer = conv_layer  # kernels size of forward layer: 
                                          # self.forward_layer.kernel_size
         padding_f = np.array(conv_layer.padding)
         ks = np.array(self.forward_layer.kernel_size) 
         padding_b = tuple(-padding_f + ks - 1)
+        if conv_layer.dilation != (1,1):
+            ks_dil = np.array(self.dil_mask(conv_layer.weight.shape).shape[-2:])
+            padding_b = tuple(-padding_f + ks_dil - 1)
         self.backward_layer =  nn.Conv2d(
             conv_layer.out_channels,
             conv_layer.in_channels,
             ks,
             stride=conv_layer.stride,
+            dilation=conv_layer.dilation,
             padding=padding_b,
             bias=False,
         )
@@ -74,11 +79,12 @@ class PatternConv2d(nn.Module):
         output = self.backward_layer(input)
         # if the dilation is not none the output has to be 
         # dilated to the original input size
-        if self.forward_layer.dilation != (1,1):
-            output_mask = self.dil_mask(output.shape)
-            output_dilated = torch.zeros(output_mask.shape)
-            output_dilated[output_mask == 1] = torch.flatten(output)
-            output = output_dilated
+        # if self.forward_layer.dilation != (1,1):
+        #     output_mask = self.dil_mask(output.shape)
+        #     print('Dilaten output shape:',output_mask.shape, 'Current output shape:', output.shape)
+        #     output_dilated = torch.zeros(output_mask.shape)
+        #     output_dilated[output_mask == 1] = torch.flatten(output)
+        #     output = output_dilated
         if normalize_output:
             # rescale output to be between -1 and 1
             absmax = torch.abs(output.data).max()
@@ -86,9 +92,6 @@ class PatternConv2d(nn.Module):
                 output.data /= absmax
             output.data[output.data > 1] = 1
             output.data[output.data < -1] = -1
-
-        
-
 
         return output
 
@@ -107,6 +110,7 @@ class PatternConv2d(nn.Module):
             dilation = self.forward_layer.dilation
             kernel_size = tuple((kernel_size[0]+(dilation[0]-1)*(kernel_size[0]-1),
                                 kernel_size[1]+(dilation[1]-1)*(kernel_size[1]-1)))
+        # print(output)
 
         if output_wo_bias is None:
             inp_dense, out_dense = patterns._conv_maps_to_dense(input, output,
@@ -300,13 +304,63 @@ class PatternMaxPool2d(nn.Module):
                                           pool_layer.padding,
                                           pool_layer.dilation,
                                           return_indices=True)
-        self.backward_layer = nn.MaxUnpool2d(pool_layer.kernel_size, 
+        # kernel_size[0]+(dilation[0]-1)*(kernel_size[0]-1)
+        ks = np.array(pool_layer.kernel_size)
+        dil = np.array(pool_layer.dilation)
+        ks_dil = ks + (dil - 1) * (ks - 1)
+        self.backward_layer = nn.MaxUnpool2d(ks_dil, 
                                              pool_layer.stride, 
                                              pool_layer.padding)
 
     def forward(self, input):
         return self.forward_layer(input)
 
-    def backward(self, input, switches):
-        return self.backward_layer(input, switches)
+    def backward(self, input, switches, output_size=None):
+        if output_size is None:
+            return self.backward_layer(input, switches)
+        else:
+            return self.backward_layer(input, switches, output_size=output_size)
+
+
+class PatternBatchNorm2d(torch.nn.Module):
+    def __init__(self, bn_layer):
+        super(PatternBatchNorm2d, self).__init__()
+        
+        self.forward_layer = bn_layer
+        # TODO: use running mean and running var if existant
+        # else need to compute new mean and var for each call
+        if bn_layer.track_running_stats:
+            self.mean = bn_layer.running_mean
+            self.var = bn_layer.running_var
+        else:
+            self.mean = None
+            self.var = None
+        
+    def forward(self, inp):
+        # TODO: check if my own computation (if no running stats) is really the same as from the layer
+        # --> did not check, but backward is just reversed computation and leads to same result as 
+        # what's passed to the layer (up to 10^-5)
+        if self.forward_layer.track_running_stats:
+#             print('Using original layer for forward pass')
+            return self.forward_layer(inp)
+        
+        else:
+            self.mean = torch.mean(inp, dim=(0,2,3), keepdim=True)
+            self.var = torch.var(inp, dim=(0,2,3), unbiased=False, keepdim=True)
+            
+            return (inp - self.mean) / (torch.sqrt(self.var + self.forward_layer.eps)) * \
+                    self.forward_layer.weight.data + self.forward_layer.bias.data
+        
+    def backward(self, out):
+        # forward computation: (x - mean) /(sqrt(var + eps))*gamma + beta
+        # --> backward computation: (out - beta) / gamma * sqrt(var+eps) + mean
+        
+        tmp = out - self.forward_layer.bias.data[None,:,None,None]
+        tmp /= self.forward_layer.weight.data[None,:,None,None]
+        tmp *= torch.sqrt(self.var + self.forward_layer.eps)[None,:,None,None]
+        tmp += self.mean[None,:,None,None]
+        result = tmp
+        
+        return result
+        
     
